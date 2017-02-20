@@ -93,6 +93,14 @@ def setup(args):
     def install_marker_key(bucket):
         s3.Object(bucket.name, MARKER_KEY_NAME).put(Body=b'', ACL='private')
 
+    def set_my_policy(cloudfront_identity, bucket):
+        policy_string = "{\"Version\":\"2008-10-17\",\"Id\":\"PolicyForCloudFrontPrivateContent\",\"Statement\":[{\"Sid\":\"1\",\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"arn:aws:iam::cloudfront:user/CloudFront Origin Access Identity %s\"},\"Action\":\"s3:GetObject\",\"Resource\":\"arn:aws:s3:::%s/*\"}]}" % (cloudfront_identity, bucket.name)
+        s3.meta.client.put_bucket_policy(
+            Bucket=bucket.name,
+            Policy=policy_string
+        )
+
+
     def object_or_none(bucket, key):
         try:
             o = s3.Object(bucket.name, key)
@@ -122,6 +130,15 @@ def setup(args):
 
             s3 = session.resource('s3', region_name=region)
             bucket = s3.Bucket(b.name)
+
+            try:
+                policy_response = s3.meta.client.get_bucket_policy(
+                    Bucket=b.name
+                )
+            except botocore.exceptions.ClientError as e:
+                if e.response['Error']['Code'] == 'NoSuchBucketPolicy':
+                    set_my_policy(cloudfront_identity_key, bucket)
+
 
             if not object_or_none(b, MARKER_KEY_NAME):
                 if not args.take_over_existing_bucket:
@@ -176,7 +193,9 @@ def setup(args):
     bucket.Website().put(WebsiteConfiguration=website_configuration)
 
     # http://docs.aws.amazon.com/AmazonS3/latest/dev/WebsiteEndpoints.html
-    website_endpoint = '%s.s3-website-%s.amazonaws.com' % (bucket.name, region)
+    #
+    #website_endpoint = '%s.s3-website-%s.amazonaws.com' % (bucket.name, region)
+    website_endpoint = '%s.s3.amazonaws.com' % (bucket.name)
 
     def set_caller_reference(options):
         options['CallerReference'] = binascii.b2a_hex(os.urandom(8)).decode('ascii')
@@ -240,10 +259,9 @@ def setup(args):
             set_if_not_equal(origin, 'DomainName', website_endpoint)
             set_if_not_equal(origin, 'Id', 'S3 Website')
 
-            custom_origin_config = get_or_set_default(origin, 'CustomOriginConfig', {})
-            set_if_not_equal(custom_origin_config, 'OriginProtocolPolicy', 'http-only')
-            set_if_not_equal(custom_origin_config, 'HTTPPort', 80)
-            set_if_not_equal(custom_origin_config, 'HTTPSPort', 443)
+            custom_origin_config = get_or_set_default(origin, 'S3OriginConfig', {})
+            cloudfront_identity_string = 'origin-access-identity/cloudfront/%s' % cloudfront_identity_key
+            set_if_not_equal(custom_origin_config, 'OriginAccessIdentity', )
 
             default_cache_behavior = get_or_set_default(config, 'DefaultCacheBehavior', {})
             set_if_not_equal(default_cache_behavior, 'Compress', True)
@@ -262,10 +280,10 @@ def setup(args):
 
         created_new_distribution = False
         for distribution_summary in all_distribution_summaries:
+
             origins = distribution_summary['Origins'].get('Items', [])
             if len(origins) == 1:
                 origin = origins[0]
-
                 if origin['DomainName'] == website_endpoint:
                     distribution_id = distribution_summary['Id']
                     distribution_domain_name = distribution_summary['DomainName']
