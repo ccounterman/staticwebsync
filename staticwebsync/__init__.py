@@ -137,7 +137,7 @@ def setup(args):
                 )
             except botocore.exceptions.ClientError as e:
                 if e.response['Error']['Code'] == 'NoSuchBucketPolicy':
-                    set_my_policy(cloudfront_identity_key, bucket)
+                    set_my_policy(args.cloudfront_identity_key, bucket)
 
 
             if not object_or_none(b, MARKER_KEY_NAME):
@@ -186,15 +186,6 @@ def setup(args):
     log_op('configuring bucket ACL policy')
     bucket.Acl().put(ACL='private')
 
-    log_op('configuring bucket for website access')
-    website_configuration = { 'IndexDocument': { 'Suffix': args.index } }
-    if args.error_page is not None:
-        website_configuration['ErrorDocument'] = { 'Key': args.error_page }
-    bucket.Website().put(WebsiteConfiguration=website_configuration)
-
-    # http://docs.aws.amazon.com/AmazonS3/latest/dev/WebsiteEndpoints.html
-    #
-    #website_endpoint = '%s.s3-website-%s.amazonaws.com' % (bucket.name, region)
     website_endpoint = '%s.s3.amazonaws.com' % (bucket.name)
 
     def set_caller_reference(options):
@@ -260,11 +251,100 @@ def setup(args):
             set_if_not_equal(origin, 'Id', 'S3 Website')
 
             custom_origin_config = get_or_set_default(origin, 'S3OriginConfig', {})
-            cloudfront_identity_string = 'origin-access-identity/cloudfront/%s' % cloudfront_identity_key
-            set_if_not_equal(custom_origin_config, 'OriginAccessIdentity', )
+            cloudfront_identity_string = 'origin-access-identity/cloudfront/%s' % args.cloudfront_identity_key
+            set_if_not_equal(custom_origin_config, 'OriginAccessIdentity', cloudfront_identity_string)
 
             default_cache_behavior = get_or_set_default(config, 'DefaultCacheBehavior', {})
             set_if_not_equal(default_cache_behavior, 'Compress', True)
+
+            # for SSL
+            allowed_methods = get_or_set_default(default_cache_behavior, 'AllowedMethods', {})
+            allowed_items = get_or_set_default(allowed_methods, 'Items', ['HEAD', 'GET', 'OPTIONS'])
+            allowed_cached_methods = get_or_set_default(allowed_methods, 'CachedMethods', {})
+            allowed_cached_items = get_or_set_default(allowed_cached_methods, 'Items', ['HEAD', 'GET', 'OPTIONS'])
+            allowed_methods['Quantity'] = 3
+            allowed_cached_methods['Quantity'] = 3
+
+            error_responses = get_or_set_default(config, 'CustomErrorResponses', {})
+            error_items = [
+                {
+                    'ErrorCode': 400, 
+                    'ResponsePagePath': '/400.html', 
+                    'ResponseCode': '400', 
+                    'ErrorCachingMinTTL': 300
+                }, 
+                {
+                    'ErrorCode': 403, 
+                    'ResponsePagePath': '/403.html', 
+                    'ResponseCode': '403', 
+                    'ErrorCachingMinTTL': 300
+                }, 
+                {
+                    'ErrorCode': 404, 
+                    'ResponsePagePath': '/404.html', 
+                    'ResponseCode': '404', 
+                    'ErrorCachingMinTTL': 300
+                }, 
+                {
+                    'ErrorCode': 405,
+                    'ResponsePagePath': '/405.html', 
+                    'ResponseCode': '405', 
+                    'ErrorCachingMinTTL': 300
+                }, 
+                {
+                    'ErrorCode': 414, 
+                    'ResponsePagePath': '/414.html', 
+                    'ResponseCode': '414', 
+                    'ErrorCachingMinTTL': 300
+                }, 
+                {
+                    'ErrorCode': 416, 
+                    'ResponsePagePath': '/416.html', 
+                    'ResponseCode': '416', 
+                    'ErrorCachingMinTTL': 300
+                }, 
+                {
+                    'ErrorCode': 500, 
+                    'ResponsePagePath': '/500.html', 
+                    'ResponseCode': '500', 
+                    'ErrorCachingMinTTL': 300
+                }, 
+                {
+                    'ErrorCode': 501, 
+                    'ResponsePagePath': '/501.html', 
+                    'ResponseCode': '501', 
+                    'ErrorCachingMinTTL': 300
+                }, 
+                {
+                    'ErrorCode': 502, 
+                    'ResponsePagePath': '/502.html', 
+                    'ResponseCode': '502', 
+                    'ErrorCachingMinTTL': 300
+                }, 
+                {
+                    'ErrorCode': 503, 
+                    'ResponsePagePath': '/503.html', 
+                    'ResponseCode': '503', 
+                    'ErrorCachingMinTTL': 300
+                }, 
+                {
+                    'ErrorCode': 504, 
+                    'ResponsePagePath': '/504.html', 
+                    'ResponseCode': '504', 
+                    'ErrorCachingMinTTL': 300
+                }
+                ];
+            
+            # changes for ssl config
+            set_if_not_equal(config, 'DefaultRootObject', "index.html")
+            set_if_not_equal(config, 'IsIPV6Enabled', True)
+            set_if_not_equal(config, 'PriceClass', 'PriceClass_100')
+            
+            error_response_items = get_or_set_default(error_responses, 'Items', error_items)
+            error_responses['Quantity'] = len(error_items)
+
+            # End SSL
+            
             set_if_not_equal(default_cache_behavior, 'TargetOriginId', origin['Id'])
             forwarded_values = get_or_set_default(default_cache_behavior, 'ForwardedValues', {})
             set_if_not_equal(forwarded_values, 'QueryString', False)
@@ -305,7 +385,7 @@ def setup(args):
             trusted_signers = default_cache_behavior.setdefault('TrustedSigners', {})
             trusted_signers.setdefault('Enabled', False)
             trusted_signers.setdefault('Quantity', 0)
-            default_cache_behavior.setdefault('ViewerProtocolPolicy', 'allow-all')
+            default_cache_behavior.setdefault('ViewerProtocolPolicy', 'redirect-to-https')
             default_cache_behavior.setdefault('MinTTL', 0)
 
             set_caller_reference(creation_config)
@@ -315,6 +395,9 @@ def setup(args):
             distribution_domain_name = distribution_creation_response['Distribution']['DomainName']
             log_op('created distribution %s' % distribution_id)
             created_new_distribution = True
+
+        update_config = {}
+        set_required_config(update_config)
 
         if not created_new_distribution:
             log_check('checking distribution configuration')
