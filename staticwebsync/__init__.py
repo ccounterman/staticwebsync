@@ -536,7 +536,7 @@ def setup(args):
                     existed = False
 
                 log_op('uploading %s' % outf)
-                upload_extra_args['ACL'] = 'public-read'
+                # Don't grant public read for SSL upload_extra_args['ACL'] = 'public-read'
 
                 # Convert our callbacks to be compatible with the boto3 upload callback API:
                 class CallbackWrapper:
