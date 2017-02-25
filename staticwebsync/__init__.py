@@ -137,7 +137,8 @@ def setup(args):
                 )
             except botocore.exceptions.ClientError as e:
                 if e.response['Error']['Code'] == 'NoSuchBucketPolicy':
-                    set_my_policy(args.cloudfront_identity_key, bucket)
+                    if args.cloudfront_identity_key is not None:
+                        set_my_policy(args.cloudfront_identity_key, bucket)
 
 
             if not object_or_none(b, MARKER_KEY_NAME):
@@ -251,8 +252,9 @@ def setup(args):
             set_if_not_equal(origin, 'Id', 'S3 Website')
 
             custom_origin_config = get_or_set_default(origin, 'S3OriginConfig', {})
-            cloudfront_identity_string = 'origin-access-identity/cloudfront/%s' % args.cloudfront_identity_key
-            set_if_not_equal(custom_origin_config, 'OriginAccessIdentity', cloudfront_identity_string)
+            if args.cloudfront_identity_key is not None:
+                cloudfront_identity_string = 'origin-access-identity/cloudfront/%s' % args.cloudfront_identity_key
+                set_if_not_equal(custom_origin_config, 'OriginAccessIdentity', cloudfront_identity_string)
 
             default_cache_behavior = get_or_set_default(config, 'DefaultCacheBehavior', {})
             set_if_not_equal(default_cache_behavior, 'Compress', True)
@@ -339,7 +341,15 @@ def setup(args):
             set_if_not_equal(config, 'DefaultRootObject', "index.html")
             set_if_not_equal(config, 'IsIPV6Enabled', True)
             set_if_not_equal(config, 'PriceClass', 'PriceClass_100')
-            
+
+            if args.logging_bucket is not None:
+                set_if_not_equal(config, 'Logging', {
+                    "Bucket": args.logging_bucket + ".s3.amazonaws.com", 
+                    "Prefix": bucket.name + "-logs", 
+                    "Enabled": True, 
+                    "IncludeCookies": True
+                });
+
             error_response_items = get_or_set_default(error_responses, 'Items', error_items)
             error_responses['Quantity'] = len(error_items)
 
@@ -407,6 +417,7 @@ def setup(args):
 
             if set_required_config(update_config):
                 log_op('configuring distribution')
+                log_op(update_config)
 
                 cf.update_distribution(
                     Id=distribution_id,

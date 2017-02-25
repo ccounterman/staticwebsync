@@ -96,6 +96,12 @@ def main():
     arg_parser.add_argument('folder',
         help="The folder containing the files to be uploaded to the web site")
 
+    arg_parser.add_argument('--cloudfront_identity_key', default=None,
+        help="Identity Key for cloudfront access to s3")
+
+    arg_parser.add_argument('--logging_bucket', default=None,
+        help="Bucket for cloudfront logs")
+
     args = arg_parser.parse_args()
 
     if args.bucket_location == DEFAULT_LOCATION:
