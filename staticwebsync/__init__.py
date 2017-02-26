@@ -170,6 +170,9 @@ def setup(args):
                     bucket = s3.create_bucket(Bucket=bucket_name)
 
                 install_marker_key(bucket)
+                if args.cloudfront_identity_key is not None:
+                    set_my_policy(args.cloudfront_identity_key, bucket)
+                    log_op('set policy on creation')
                 break
             except botocore.exceptions.ClientError as e:
                 if e.response['Error']['Code'] == 'BucketAlreadyExists':
